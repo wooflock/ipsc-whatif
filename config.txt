@@ -1,0 +1,31 @@
+﻿username: wooflock@gmail.com
+password: #################
+database: whatif.db3
+#viking
+#url: http://shootnscoreit.com/ipsc/match/3085/
+#odal del3
+#url: http://shootnscoreit.com/ipsc/match/3014/
+#odal del 2
+#url: http://shootnscoreit.com/ipsc/match/2942/
+#june cup
+url: http://shootnscoreit.com/ipsc/match/2397/
+#maj
+#url: http://shootnscoreit.com/ipsc/match/2396/
+#odal 1
+#url: http://shootnscoreit.com/ipsc/match/2816/
+#höstsonat
+#url: http://shootnscoreit.com/ipsc/match/2338/
+#sandviken grand prix
+#url: http://shootnscoreit.com/ipsc/match/2136/
+#mälardalen
+#url: http://shootnscoreit.com/ipsc/match/1649/
+#eskilskup 
+#url: http://shootnscoreit.com/ipsc/match/2191/
+#mälar 1
+#url: http://shootnscoreit.com/ipsc/match/1677/
+#mälar 0
+#url: http://shootnscoreit.com/series/ipsc/78/
+#oden
+#url: http://shootnscoreit.com/ipsc/match/1480/
+# koxäng
+#url: http://shootnscoreit.com/ipsc/match/1944/
