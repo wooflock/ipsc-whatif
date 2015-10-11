@@ -103,7 +103,8 @@ foreach my $shooter_start_id ( keys %match_shooter ) {
 
     my $MATCH_ID = $match_id;
     my $SHOOTER_START_ID = $shooter_start_id;
-    my $NAME = $match_shooter{$shooter_start_id}{'first'} . " " . $match_shooter{$shooter_start_id}{'last'};
+    my $tNAME = $match_shooter{$shooter_start_id}{'first'} . " " . $match_shooter{$shooter_start_id}{'last'};
+    my $NAME = $dbh->quote($tNAME);
     my $ms_division = $match_shooter{$shooter_start_id}{'division'};
     my $DIVISION_ID = "error";
     foreach my $key (keys %divisions) {
@@ -132,7 +133,7 @@ foreach my $shooter_start_id ( keys %match_shooter ) {
     }
     if ($shooter_url_complete ) {
         # there is a working link. Lets go get that shooter.
-        print "\n $shooter_url_complete \n";
+        print "$shooter_url_complete \n";
         $mech->get( $shooter_url_complete );
         my @user_links = $mech->find_all_links( url_regex => qr/\/users\// );
         my $SSI_URL = $user_links[0]->url_abs();
@@ -143,18 +144,17 @@ foreach my $shooter_start_id ( keys %match_shooter ) {
         my ($id, $search_result) = $sth->fetchrow();
         unless( $search_result ) {
             # already exists.
-            $NAME =~ s/[\'\"\$\`\´]//g;
-            $dbh->do("INSERT INTO shooter(NAME,SSI_URL) VALUES('$NAME','$SSI_URL')");
+            $dbh->do("INSERT INTO shooter(NAME,SSI_URL) VALUES($NAME,'$SSI_URL')");
             $id = $dbh->last_insert_id("", "", "shooter", "");
         }
-        $dbh->do("INSERT INTO shooter_match(SHOOTER_START_ID,SHOOTER_ID,NAME,MATCH_ID, DIVISION_ID, POWER_FACTOR_ID) VALUES($SHOOTER_START_ID,$id,'$NAME',$MATCH_ID, $DIVISION_ID, $POWER_FACTOR_ID)");
+        $dbh->do("INSERT INTO shooter_match(SHOOTER_START_ID,SHOOTER_ID,NAME,MATCH_ID, DIVISION_ID, POWER_FACTOR_ID) VALUES($SHOOTER_START_ID,$id,$NAME,$MATCH_ID, $DIVISION_ID, $POWER_FACTOR_ID)");
         # we need to get shooter_match_id for stage_score table
         
         
     } else {
         print "shooter added to shooter_match table, but not to shooter table\n";
         # we did not get a URL so we only have his data for the match and not for the other table.
-        $dbh->do("INSERT INTO shooter_match(SHOOTER_START_ID,NAME,MATCH_ID, DIVISION_ID, POWER_FACTOR_ID) VALUES($SHOOTER_START_ID,'$NAME',$MATCH_ID, $DIVISION_ID, $POWER_FACTOR_ID)");
+        $dbh->do("INSERT INTO shooter_match(SHOOTER_START_ID,NAME,MATCH_ID, DIVISION_ID, POWER_FACTOR_ID) VALUES($SHOOTER_START_ID,$NAME,$MATCH_ID, $DIVISION_ID, $POWER_FACTOR_ID)");
     }
     
 }
@@ -240,8 +240,8 @@ sub parse_stage
     # getting stage title
     $stream->get_tag('body');
     $stream->get_tag('h1');
-    my $NAME = $stream->get_trimmed_text('/h1');
-    $NAME =~ s/[\'\"\$]//g; # remove stuff like ' and " and shit.
+    my $tNAME = $stream->get_trimmed_text('/h1');
+    my $NAME = $dbh->quote($tNAME);
     print "TITLE: $NAME\n";
     
     
@@ -258,9 +258,9 @@ sub parse_stage
         print "max points: $MAXROUNDS \n";
     }
     
-    print "INSERT INTO stage(MATCH_ID,NAME,STAGE_URL,MAXROUNDS) VALUES($MATCH_ID,'$NAME','$STAGE_URL',$MAXROUNDS) \n";
+    print "INSERT INTO stage(MATCH_ID,NAME,STAGE_URL,MAXROUNDS) VALUES($MATCH_ID,$NAME,'$STAGE_URL',$MAXROUNDS) \n";
     # ok, we now add the stage info into stage
-    $dbh->do("INSERT INTO stage(MATCH_ID,NAME,STAGE_URL,MAXROUNDS) VALUES($MATCH_ID,'$NAME','$STAGE_URL',$MAXROUNDS)");
+    $dbh->do("INSERT INTO stage(MATCH_ID,NAME,STAGE_URL,MAXROUNDS) VALUES($MATCH_ID,$NAME,'$STAGE_URL',$MAXROUNDS)");
     my $STAGE_ID = $dbh->last_insert_id("", "", "stage", "");
     
     # now we have what we need and can get shooter data for the stage_result table
