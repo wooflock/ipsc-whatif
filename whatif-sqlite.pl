@@ -52,6 +52,9 @@ my $murl;
 foreach $murl ( @$murls ) {
     print "Getting SSI match results for: $murl \n";
     get_match( $mech, $dbh, $murl );
+    
+    parse_club( $dbh, $mech, $murl);
+
 }
 
 $sth->finish();
@@ -269,7 +272,6 @@ sub parse_stage
         #print "max points: $MAXROUNDS \n";
     }
     
-    #print "INSERT INTO stage(MATCH_ID,NAME,STAGE_URL,MAXROUNDS) VALUES($MATCH_ID,$NAME,'$STAGE_URL',$MAXROUNDS) \n";
     # ok, we now add the stage info into stage
     $dbh->do("INSERT INTO stage(MATCH_ID,NAME,STAGE_URL,MAXROUNDS) VALUES($MATCH_ID,$NAME,'$STAGE_URL',$MAXROUNDS)");
     my $STAGE_ID = $dbh->last_insert_id("", "", "stage", "");
@@ -292,14 +294,8 @@ sub parse_stage
         
         $tag = $stream->get_tag('td');
         $tag = $stream->get_tag('a');
-        
-        #print " finding user with SMID $SMID ";
-        #print  $stream->get_trimmed_text('/a');
-        #print " ";
         $tag = $stream->get_tag('td');
         $tag = $stream->get_tag('a');
-        #print $stream->get_trimmed_text('/a');
-        #print "\n";
         $tag = $stream->get_tag('td');
         my $A = $stream->get_trimmed_text('/td');
         $tag = $stream->get_tag('td');
@@ -325,4 +321,92 @@ sub parse_stage
         
         $counter++;
     }
+}
+
+sub parse_club
+{
+    # and getting the title for the match also.
+    my $dbh = shift;
+    my $mech = shift;
+    my $murl = shift;
+    my $org_murl = $murl;
+    my %shooter;
+    
+    # i need a match id
+    my $sth = $dbh->prepare("SELECT ID FROM match WHERE SSI_URL='$org_murl'");
+    $sth->execute();
+    my $MATCH_ID = $sth->fetchrow();
+    
+    # taking the match page and get to the result page for combined
+    # thats where the results are.
+    $murl =~ s/ipsc\/match/ipsc\/results\/match/ ;
+    $murl = $murl . "combined/";
+    
+    # get the url
+    $mech->get( $murl);
+    my $page = $mech->content();
+    my $stream = HTML::TokeParser->new( \$page ) or die $!;
+    
+    # Lets fetch the Title and add that to the match table.
+    my $tag = $stream->get_tag("h1");
+    my $TITLE = $stream->get_trimmed_text('/h1');
+    #<h1>COMBINED results in Höstsonaten 15</h1>
+    $TITLE =~ s/COMBINED\ results\ in\ //;
+    
+    $dbh->do("UPDATE match SET NAME = '$TITLE' WHERE SSI_URL = '$org_murl'");
+    
+    # now we are going to get some shooter info.. we need the CATEGORIES in the table categories
+    $sth = $dbh->prepare( "SELECT * FROM category" );  
+    $sth->execute();
+      
+    my $row;
+    my %categories;
+    while($row = $sth->fetchrow_hashref()) {
+            $categories{ $row->{'SHORT_NAME'} } = $row->{'ID'};
+    }
+    
+    # add club data..
+    #club table has ID and NAME
+    $stream->get_tag("table");
+    $stream->get_tag("tbody");
+    while ( $tag = $stream->get_tag("tr") ) {
+        
+        $tag = $stream->get_tag('td'); # place
+        $tag = $stream->get_tag('td'); # percent
+        $tag = $stream->get_tag('td'); # points
+        $tag = $stream->get_tag('td'); # start_number!
+        my $SHOOTER_START_ID = $stream->get_trimmed_text('/td');
+        $tag = $stream->get_tag('td'); # first
+        $tag = $stream->get_tag('td'); # last
+        $tag = $stream->get_tag('td'); # Class
+        $tag = $stream->get_tag('td'); # CAT (categori, senior lady.. get later)
+        $tag = $stream->get_tag('abbr');
+        my $CATEGORY = $stream->get_trimmed_text('/abbr');
+        my $CATEGORY_ID = $categories{"$CATEGORY"};
+        $tag = $stream->get_tag('td'); # REGION
+        $tag = $stream->get_tag('td'); # IPSC CLASSIFICATION U, D,C,B,A, master, grandmaster
+        my $CLASSIFICATION = $stream->get_trimmed_text('/td');
+        $tag = $stream->get_tag('td'); # IPSC ALIAS
+        $tag = $stream->get_tag('td'); # CLUB !!!
+        my $sCLUB = $stream->get_trimmed_text('/td');
+        my $CLUB = $dbh->quote($sCLUB);
+        my $CLUB_ID;
+        
+        # to insert clubs. we first see if there is any club that matches $CLUB and get that ID, else we insert it.
+        $sth = $dbh->prepare("SELECT ID FROM club WHERE NAME=$CLUB");
+        $sth->execute();
+        $CLUB_ID = $sth->fetchrow();
+        if ($sth->rows == 0) {
+            # Club doesent exist.. we create a new entry.
+            $dbh->do("INSERT INTO club(NAME) VALUES($CLUB)");
+            $CLUB_ID = $dbh->last_insert_id("", "", "club", "");
+        }
+    
+        # ok. we have a MATCH_ID a SHOOTER_START_ID and a CLUB_ID for the shooter_match table. so we update that.
+        # to insert club in shooter_match we need to have startid and match_id to work.
+        $dbh->do("UPDATE shooter_match SET CLUB_ID = $CLUB_ID WHERE MATCH_ID = $MATCH_ID AND SHOOTER_START_ID = $SHOOTER_START_ID");
+        $dbh->do("UPDATE shooter_match SET CATEGORY_ID = $CATEGORY_ID WHERE MATCH_ID = $MATCH_ID AND SHOOTER_START_ID = $SHOOTER_START_ID");
+        
+    }
+
 }
