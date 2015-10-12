@@ -11,7 +11,6 @@ use strict;
 use WWW::Mechanize;
 use Config::Simple;
 use HTML::TokeParser;
-#use Excel::Writer::XLSX;
 use DBI;
 
 # read in data from config file
@@ -19,8 +18,6 @@ use DBI;
 my $configfile = "config.txt";
 my %cfg;
 Config::Simple->import_from($configfile, \%cfg) or die "can not read $configfile: $! \n";
-
-my $murl = $cfg{'url'};
 
 # connect to db
 my $dbh = DBI->connect(
@@ -37,159 +34,174 @@ my $ver = $sth->fetch();
 print @$ver;
 print " sqlite db version\n";
 
-# check if we have this match already by url. if not add it.
-
-# check code here
-$sth = $dbh->prepare("SELECT SSI_URL FROM match WHERE SSI_URL='$murl'" );
-$sth->execute();
-$sth->fetchrow();
-if ( $sth->rows() ) {
-    # we have this match so we do not go ahead and fetch this data. closing down.
-    $sth->finish();
-    $dbh->disconnect();
-    print "Match with $murl already exists in database!\n";
-    exit;
-}
-#add code here
-$dbh->do("INSERT INTO match(SSI_URL) VALUES ('$murl')");
-my $match_MATCH_ID = $dbh->last_insert_id("", "", "match", "");
-
-# getting the match data but first login to ssi
+# testing to login to SSI
+print "Logging in to SSI with user $cfg{'username'}";
 my $mech = WWW::Mechanize->new( autocheck => 1 );
-
 $mech->get("https://shootnscoreit.com/login");
 $mech->submit_form(
         form_number => 1,
         fields      => { username => $cfg{'username'}, password => $cfg{'password'} },
 );
 die unless ($mech->success);
+print " OK!\n\n";
 
-
-
-$mech->get( $murl );
-
-# getting the links to the stages
-my @links = $mech->find_all_links( url_regex => qr/\/stage\// ); # stages:
-
-# getting the links to the competitors, and competitor info in %shooter
-my %shooter;
-my %match_shooter;
-my @Clinks = $mech->find_all_links( url_regex => qr/\/competitor\/all\// ); # comps;
-$mech->get( $Clinks[0]->url_abs );
-my $comppage = $mech->content();
-parse_shooters($comppage,\%shooter,\%match_shooter);
-
-# build the database of shooter_match. the shooters for this match.
-# we need ID first from match table.
-my $match_id = $match_MATCH_ID;
-# we need ID for MAJOR and MINOR
-$sth = $dbh->prepare("SELECT ID FROM powerfactor WHERE NAME='MAJOR'");
-$sth->execute();
-my $MAJOR = $sth->fetchrow();
-$sth = $dbh->prepare("SELECT ID FROM powerfactor WHERE NAME='MINOR'");
-$sth->execute();
-my $MINOR = $sth->fetchrow();
-# we also need id for division (production etc)
-$sth = $dbh->prepare("SELECT * FROM division");
-$sth->execute();
-my %divisions;
-while( my ($division_id,$division_name) = $sth->fetchrow() ) {
-    $divisions{$division_id} = $division_name;
+# now we go through all the urls.
+# Fetching match data
+my $murls = $cfg{'url'}; # murls = match urls
+my $murl;
+foreach $murl ( @$murls ) {
+    print "Getting SSI match results for: $murl \n";
+    get_match( $mech, $dbh, $murl );
 }
-# now insert it...
-my @shoot_links = $mech->find_all_links( url_regex => qr/\/ipsc\/competitor\// );
-foreach my $shooter_start_id ( keys %match_shooter ) {
-    # return to the shooter page!
-
-    my $MATCH_ID = $match_id;
-    my $SHOOTER_START_ID = $shooter_start_id;
-    my $tNAME = $match_shooter{$shooter_start_id}{'first'} . " " . $match_shooter{$shooter_start_id}{'last'};
-    my $NAME = $dbh->quote($tNAME);
-    my $ms_division = $match_shooter{$shooter_start_id}{'division'};
-    my $DIVISION_ID = "error";
-    foreach my $key (keys %divisions) {
-        if ($ms_division =~ /$divisions{$key}/i ) {
-            $DIVISION_ID = $key;
-        }
-    }
-    if ($DIVISION_ID eq "error") { die " can not parse shooter $NAME\n"; }
-    my $POWER_FACTOR_ID;
-    if ($ms_division =~ /\+/ ) {
-        $POWER_FACTOR_ID = $MAJOR; }
-    else {
-        $POWER_FACTOR_ID = $MINOR;
-    }
-    
-    # now lets gets follow the url from ssi to get the page on the shooter.
-    # Get the shooters unique ssi address (diffrent from the competition address for the shooter..
-    my $shooter_url = $match_shooter{$shooter_start_id}{'url'};
-    #my @shoot_links = $mech->find_all_links( url_regex => qr/\/ipsc\/competitor\// );
-    my $shooter_url_complete = 0;
-    foreach my $slt (@shoot_links) {
-        my $sl = $slt->url_abs();
-        if ( $sl =~ /$shooter_url/ ) {
-            $shooter_url_complete = $sl;
-        }
-    }
-    if ($shooter_url_complete ) {
-        # there is a working link. Lets go get that shooter.
-        print "$shooter_url_complete \n";
-        $mech->get( $shooter_url_complete );
-        my @user_links = $mech->find_all_links( url_regex => qr/\/users\// );
-        my $SSI_URL = $user_links[0]->url_abs();
-        
-        # now check if they exist before we enter them in the database again.
-        $sth = $dbh->prepare("SELECT ID, SSI_URL FROM shooter WHERE SSI_URL='$SSI_URL'");
-        $sth->execute();
-        my ($id, $search_result) = $sth->fetchrow();
-        unless( $search_result ) {
-            # already exists.
-            $dbh->do("INSERT INTO shooter(NAME,SSI_URL) VALUES($NAME,'$SSI_URL')");
-            $id = $dbh->last_insert_id("", "", "shooter", "");
-        }
-        $dbh->do("INSERT INTO shooter_match(SHOOTER_START_ID,SHOOTER_ID,NAME,MATCH_ID, DIVISION_ID, POWER_FACTOR_ID) VALUES($SHOOTER_START_ID,$id,$NAME,$MATCH_ID, $DIVISION_ID, $POWER_FACTOR_ID)");
-        # we need to get shooter_match_id for stage_score table
-        
-        
-    } else {
-        print "shooter added to shooter_match table, but not to shooter table\n";
-        # we did not get a URL so we only have his data for the match and not for the other table.
-        $dbh->do("INSERT INTO shooter_match(SHOOTER_START_ID,NAME,MATCH_ID, DIVISION_ID, POWER_FACTOR_ID) VALUES($SHOOTER_START_ID,$NAME,$MATCH_ID, $DIVISION_ID, $POWER_FACTOR_ID)");
-    }
-    
-}
-
-# Now shooter data is ready. Now we need to add all the match data for this match.
-# it goes into stage and stage score. the $match_MATCH_ID exists already.
-
-# getting rid of multiple entries of the same URL
-my %doneurls;
-foreach my $link ( @links )
-{
-    my $stagelink = $link->url_abs;
-    if (exists $doneurls{$stagelink} ) { 
-        $doneurls{$stagelink}++; 
-    } else { 
-        $doneurls{$stagelink} = 1;
-    }
-}
-
-my $stagecount = 0;
-foreach my $uurl (keys %doneurls) {
-    $mech->get( $uurl );
-    my $stagepage = $mech->content();
-    parse_stage($stagepage, \%shooter,$dbh,$uurl,$match_MATCH_ID);
-
-    $stagecount++;
-}
-
-#print $stagecount ."\n";
-
-    
-
 
 $sth->finish();
 $dbh->disconnect();
+
+
+# check if we have this match already by url. if not add it.
+sub get_match
+{
+    my $mech = shift;
+    my $dbh = shift;
+    my $murl = shift;
+    
+    # check if match already is in DB.
+    $sth = $dbh->prepare("SELECT SSI_URL FROM match WHERE SSI_URL='$murl'" );
+    $sth->execute();
+    $sth->fetchrow();
+    if ( $sth->rows() ) {
+        # we have this match so we do not go ahead and fetch this data. return.
+        print "Match with $murl already exists in database!\n";
+        return;
+    }
+    
+    # we add this match to database.
+    $dbh->do("INSERT INTO match(SSI_URL) VALUES ('$murl')");
+    my $match_MATCH_ID = $dbh->last_insert_id("", "", "match", "");
+
+    # getting the match data from SSI
+    $mech->get( $murl );
+
+    # getting the links to the stages
+    my @links = $mech->find_all_links( url_regex => qr/\/stage\// ); # stages:
+
+    # getting the links to the competitors, and competitor info in %shooter
+    my %shooter;
+    my %match_shooter;
+    my @Clinks = $mech->find_all_links( url_regex => qr/\/competitor\/all\// ); # comps;
+    $mech->get( $Clinks[0]->url_abs );
+    my $comppage = $mech->content();
+    
+    parse_shooters($comppage,\%shooter,\%match_shooter);
+
+    # build the database of shooter_match. the shooters for this match.
+    # we need ID first from match table.
+    my $match_id = $match_MATCH_ID;
+    # we need ID for MAJOR and MINOR
+    $sth = $dbh->prepare("SELECT ID FROM powerfactor WHERE NAME='MAJOR'");
+    $sth->execute();
+    my $MAJOR = $sth->fetchrow();
+    $sth = $dbh->prepare("SELECT ID FROM powerfactor WHERE NAME='MINOR'");
+    $sth->execute();
+    my $MINOR = $sth->fetchrow();
+    # we also need id for division (production etc)
+    $sth = $dbh->prepare("SELECT * FROM division");
+    $sth->execute();
+    my %divisions;
+    while( my ($division_id,$division_name) = $sth->fetchrow() ) {
+        $divisions{$division_id} = $division_name;
+    }
+    # now insert it...
+    my @shoot_links = $mech->find_all_links( url_regex => qr/\/ipsc\/competitor\// );
+    foreach my $shooter_start_id ( keys %match_shooter ) {
+        # return to the shooter page!
+
+        my $MATCH_ID = $match_id;
+        my $SHOOTER_START_ID = $shooter_start_id;
+        my $tNAME = $match_shooter{$shooter_start_id}{'first'} . " " . $match_shooter{$shooter_start_id}{'last'};
+        my $NAME = $dbh->quote($tNAME);
+        my $ms_division = $match_shooter{$shooter_start_id}{'division'};
+        my $DIVISION_ID = "error";
+        foreach my $key (keys %divisions) {
+            if ($ms_division =~ /$divisions{$key}/i ) {
+                $DIVISION_ID = $key;
+            }
+        }
+        if ($DIVISION_ID eq "error") { die " can not parse shooter $NAME\n"; }
+        my $POWER_FACTOR_ID;
+        if ($ms_division =~ /\+/ ) {
+            $POWER_FACTOR_ID = $MAJOR; }
+        else {
+            $POWER_FACTOR_ID = $MINOR;
+        }
+    
+        # now lets gets follow the url from ssi to get the page on the shooter.
+        # Get the shooters unique ssi address (diffrent from the competition address for the shooter..
+        my $shooter_url = $match_shooter{$shooter_start_id}{'url'};
+        #my @shoot_links = $mech->find_all_links( url_regex => qr/\/ipsc\/competitor\// );
+        my $shooter_url_complete = 0;
+        foreach my $slt (@shoot_links) {
+            my $sl = $slt->url_abs();
+            if ( $sl =~ /$shooter_url/ ) {
+                $shooter_url_complete = $sl;
+            }
+        }
+        if ($shooter_url_complete ) {
+            # there is a working link. Lets go get that shooter.
+            #print "$shooter_url_complete \n";
+            $mech->get( $shooter_url_complete );
+            my @user_links = $mech->find_all_links( url_regex => qr/\/users\// );
+            my $SSI_URL = $user_links[0]->url_abs();
+            
+            # try to get some more details from the shooter page. later
+            
+        
+            # now check if they exist before we enter them in the database again.
+            $sth = $dbh->prepare("SELECT ID, SSI_URL FROM shooter WHERE SSI_URL='$SSI_URL'");
+            $sth->execute();
+            my ($id, $search_result) = $sth->fetchrow();
+            unless( $search_result ) {
+                # already exists.
+                $dbh->do("INSERT INTO shooter(NAME,SSI_URL) VALUES($NAME,'$SSI_URL')");
+                $id = $dbh->last_insert_id("", "", "shooter", "");
+            }
+            $dbh->do("INSERT INTO shooter_match(SHOOTER_START_ID,SHOOTER_ID,NAME,MATCH_ID, DIVISION_ID, POWERFACTOR_ID) VALUES($SHOOTER_START_ID,$id,$NAME,$MATCH_ID, $DIVISION_ID, $POWER_FACTOR_ID)");
+            # we need to get shooter_match_id for stage_score table
+        
+        
+        } else {
+            print "shooter added to shooter_match table, but not to shooter table\n";
+            # we did not get a URL so we only have his data for the match and not for the other table.
+            $dbh->do("INSERT INTO shooter_match(SHOOTER_START_ID,NAME,MATCH_ID, DIVISION_ID, POWERFACTOR_ID) VALUES($SHOOTER_START_ID,$NAME,$MATCH_ID, $DIVISION_ID, $POWER_FACTOR_ID)");
+        }
+    
+    }
+
+    # Now shooter data is ready. Now we need to add all the match data for this match.
+    # it goes into stage and stage score. the $match_MATCH_ID exists already.
+
+    # getting rid of multiple entries of the same URL
+    my %doneurls;
+    foreach my $link ( @links )
+    {
+        my $stagelink = $link->url_abs;
+        if (exists $doneurls{$stagelink} ) { 
+            $doneurls{$stagelink}++; 
+        } else { 
+            $doneurls{$stagelink} = 1;
+        }
+    }
+
+    my $stagecount = 0;
+    foreach my $uurl (keys %doneurls) {
+        $mech->get( $uurl );
+        my $stagepage = $mech->content();
+        parse_stage($stagepage, \%shooter,$dbh,$uurl,$match_MATCH_ID);
+
+        $stagecount++;
+    }
+    
+}
 
 sub parse_shooters
 {
@@ -232,7 +244,7 @@ sub parse_stage
     my $dbh = shift;
     my $STAGE_URL = shift;
     my $MATCH_ID = shift;
-    my $shooter;
+    my %shooter;
     my $stream = HTML::TokeParser->new( \$page ) or die $!;
     my $tag;
     my $MAXROUNDS;
@@ -242,8 +254,7 @@ sub parse_stage
     $stream->get_tag('h1');
     my $tNAME = $stream->get_trimmed_text('/h1');
     my $NAME = $dbh->quote($tNAME);
-    print "TITLE: $NAME\n";
-    
+    print "\tGetting stage: $NAME\n";
     
     # trying to get the Max points from the page.
     $stream->get_tag('hr');
@@ -255,10 +266,10 @@ sub parse_stage
     my @textarr = split(/\:/,$maxrounds_text);
     if ($textarr[2] =~ /(\d+)/) {
         $MAXROUNDS = $1;
-        print "max points: $MAXROUNDS \n";
+        #print "max points: $MAXROUNDS \n";
     }
     
-    print "INSERT INTO stage(MATCH_ID,NAME,STAGE_URL,MAXROUNDS) VALUES($MATCH_ID,$NAME,'$STAGE_URL',$MAXROUNDS) \n";
+    #print "INSERT INTO stage(MATCH_ID,NAME,STAGE_URL,MAXROUNDS) VALUES($MATCH_ID,$NAME,'$STAGE_URL',$MAXROUNDS) \n";
     # ok, we now add the stage info into stage
     $dbh->do("INSERT INTO stage(MATCH_ID,NAME,STAGE_URL,MAXROUNDS) VALUES($MATCH_ID,$NAME,'$STAGE_URL',$MAXROUNDS)");
     my $STAGE_ID = $dbh->last_insert_id("", "", "stage", "");
