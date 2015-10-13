@@ -87,6 +87,10 @@ sub get_match
 
     # getting the links to the stages
     my @links = $mech->find_all_links( url_regex => qr/\/stage\// ); # stages:
+    
+    # getting a link to the calendar object so we can get the date for the match
+    # later..
+    my @calender_link = $mech->find_all_links( url_regex => qr/\/export\/calendar\// );
 
     # getting the links to the competitors, and competitor info in %shooter
     my %shooter;
@@ -204,8 +208,42 @@ sub get_match
         $stagecount++;
     }
     
+    # now trying to get the calendar object
+    my $date = parse_calendar( $calender_link[0]->url_abs(), $mech);
+    $dbh->do("UPDATE match SET DATE = $date WHERE ID = $match_MATCH_ID");
+    
+    
 }
-
+sub parse_calendar
+{
+    my $calender_link = shift;
+    my $mech = shift;
+    $mech->get( $calender_link);
+    my $page = $mech->content();
+    
+    # the page is a calendar object. lets print it.
+    # lets parse out the date
+    my $zone;
+    my $date_string;
+    my $date;
+    my $time;
+    for (split /^/, $page) {  # same as a while loop on a textfile
+        my $line = $_;
+        chomp ($line);
+        if ($line =~ /DTSTART/) {
+            # we got the line with the date.
+            # remove DTSTART
+            $line =~ s/DTSTART\;//;
+            ($zone, $date_string) = split(/;/,$line);
+            $date_string =~ s/VALUE=DATE-TIME\://;
+            ($date,$time) = split(/T/,$date_string);
+            print "\n#### \'" . $date . "\' ########\n";
+            return $date;
+        }
+    }
+    return; 
+    
+}
 sub parse_shooters
 {
     my $page = shift;
@@ -349,11 +387,11 @@ sub parse_club
     
     # Lets fetch the Title and add that to the match table.
     my $tag = $stream->get_tag("h1");
-    my $TITLE = $stream->get_trimmed_text('/h1');
+    my $sTITLE = $stream->get_trimmed_text('/h1');
     #<h1>COMBINED results in Höstsonaten 15</h1>
-    $TITLE =~ s/COMBINED\ results\ in\ //;
-    
-    $dbh->do("UPDATE match SET NAME = '$TITLE' WHERE SSI_URL = '$org_murl'");
+    $sTITLE =~ s/COMBINED\ results\ in\ //;
+    my $TITLE = $dbh->quote($sTITLE);
+    $dbh->do("UPDATE match SET NAME = $TITLE WHERE SSI_URL = '$org_murl'");
     
     # now we are going to get some shooter info.. we need the CATEGORIES in the table categories
     $sth = $dbh->prepare( "SELECT * FROM category" );  
