@@ -350,6 +350,7 @@ sub parse_stage
         $shooter{'POINTS'} = $stream->get_trimmed_text('/td');
         $tag = $stream->get_tag('td');
         my $TIME = $stream->get_trimmed_text('/td');
+        $TIME =~ s/\,/./;
         $tag = $stream->get_tag('td');
         $shooter{'FACTOR'} = $stream->get_trimmed_text('/td');
         $tag = $stream->get_tag('td');
