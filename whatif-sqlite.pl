@@ -153,6 +153,21 @@ sub get_match
                 $shooter_url_complete = $sl;
             }
         }
+        
+        # try to get some more details from the shooter match page. later
+        # for example if they have been disqualified! <h3>Disqualified (DQ)</h3>
+        my $match_shooter_page = $mech->content();
+        # lets just see if we find Disqualified on the 
+           
+        # lets parse out the date
+        my $DISQUALIFIED = 0;
+        for (split /^/, $match_shooter_page) {  # same as a while loop on a textfile
+            my $line = $_;
+            if ($line =~ /<h3>Disqualified/) {
+                $DISQUALIFIED = 1;
+            }
+        }
+        
         if ($shooter_url_complete ) {
             # there is a working link. Lets go get that shooter.
             #print "$shooter_url_complete \n";
@@ -160,9 +175,8 @@ sub get_match
             my @user_links = $mech->find_all_links( url_regex => qr/\/users\// );
             my $SSI_URL = $user_links[0]->url_abs();
             
-            # try to get some more details from the shooter page. later
             
-        
+            
             # now check if they exist before we enter them in the database again.
             $sth = $dbh->prepare("SELECT ID, SSI_URL FROM shooter WHERE SSI_URL='$SSI_URL'");
             $sth->execute();
@@ -172,14 +186,14 @@ sub get_match
                 $dbh->do("INSERT INTO shooter(NAME,SSI_URL) VALUES($NAME,'$SSI_URL')");
                 $id = $dbh->last_insert_id("", "", "shooter", "");
             }
-            $dbh->do("INSERT INTO shooter_match(SHOOTER_START_ID,SHOOTER_ID,NAME,MATCH_ID, DIVISION_ID, POWERFACTOR_ID) VALUES($SHOOTER_START_ID,$id,$NAME,$MATCH_ID, $DIVISION_ID, $POWER_FACTOR_ID)");
+            $dbh->do("INSERT INTO shooter_match(SHOOTER_START_ID,SHOOTER_ID,NAME,MATCH_ID, DIVISION_ID, POWERFACTOR_ID, DQ) VALUES($SHOOTER_START_ID,$id,$NAME,$MATCH_ID, $DIVISION_ID, $POWER_FACTOR_ID, $DISQUALIFIED)");
             # we need to get shooter_match_id for stage_score table
         
         
         } else {
             print "shooter added to shooter_match table, but not to shooter table\n";
             # we did not get a URL so we only have his data for the match and not for the other table.
-            $dbh->do("INSERT INTO shooter_match(SHOOTER_START_ID,NAME,MATCH_ID, DIVISION_ID, POWERFACTOR_ID) VALUES($SHOOTER_START_ID,$NAME,$MATCH_ID, $DIVISION_ID, $POWER_FACTOR_ID)");
+            $dbh->do("INSERT INTO shooter_match(SHOOTER_START_ID,NAME,MATCH_ID, DIVISION_ID, POWERFACTOR_ID, DQ) VALUES($SHOOTER_START_ID,$NAME,$MATCH_ID, $DIVISION_ID, $POWER_FACTOR_ID, $DISQUALIFIED)");
         }
     
     }
